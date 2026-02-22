@@ -29,10 +29,10 @@ Get detailed US weather forecasts from the National Weather Service with automat
 
 ```bash
 # Run the unified weather script
-python3 ~/clawd/skills/weather-nws/scripts/get_weather.py "New York, NY"
+python3 ./scripts/get_weather.py "New York, NY"
 
 # Force specific source if needed (normally auto-detected)
-python3 ~/clawd/skills/weather-nws/scripts/get_weather.py "London, UK" --source wttr
+python3 ./scripts/get_weather.py "London, UK" --source wttr
 ```
 
 ## Output Format
@@ -62,13 +62,13 @@ The script handles:
 
 **US winter storm query:**
 ```
-python3 ~/clawd/skills/weather-nws/scripts/get_weather.py "Boston, MA"
+python3 ./scripts/get_weather.py "Boston, MA"
 ```
 → Returns NWS data with accumulation estimates
 
 **International location:**
 ```
-python3 ~/clawd/skills/weather-nws/scripts/get_weather.py "Toronto, Canada"
+python3 ./scripts/get_weather.py "Toronto, Canada"
 ```
 → Automatically uses wttr.in, notes it's non-US
 
