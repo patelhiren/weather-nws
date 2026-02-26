@@ -3,6 +3,7 @@
 Unified weather fetcher with US (NWS) priority and global fallback (wttr.in)
 Provides consistent, actionable output format.
 Phase 1: Hourly forecast, AirNow AQI, structured grid data for accumulations
+Phase 2: Station observations (--current), enhanced alert formatting with priorities
 """
 
 import sys
@@ -58,6 +59,55 @@ AQI_CATEGORIES = {
                  "recommendation": "Health alert: everyone may experience serious health effects. Stay indoors."},
 }
 
+# Alert severity/urgency/certainty weights for priority calculation
+ALERT_SEVERITY_WEIGHTS = {
+    "Extreme": 4,
+    "Severe": 3,
+    "Moderate": 2,
+    "Minor": 1,
+    "Unknown": 0,
+}
+
+ALERT_URGENCY_WEIGHTS = {
+    "Immediate": 3,
+    "Expected": 2,
+    "Future": 1,
+    "Unknown": 0,
+}
+
+ALERT_CERTAINTY_WEIGHTS = {
+    "Observed": 3,
+    "Likely": 2,
+    "Possible": 1,
+    "Unknown": 0,
+}
+
+ALERT_SEVERITY_STYLES = {
+    "Extreme": {"emoji": "⚫", "tint": "bold", "badge": "EXTREME"},
+    "Severe": {"emoji": "🔴", "tint": "red", "badge": "SEVERE"},
+    "Moderate": {"emoji": "🟠", "tint": "orange", "badge": "MODERATE"},
+    "Minor": {"emoji": "🟡", "tint": "yellow", "badge": "MINOR"},
+    "Unknown": {"emoji": "⚪", "tint": "none", "badge": "UNKNOWN"},
+}
+
+ALERT_URGENCY_TAGS = {
+    "Immediate": "⏰ Immediate",
+    "Expected": "📅 Expected",
+    "Future": "🔮 Future",
+    "Unknown": "❓ Unknown",
+}
+
+ALERT_RESPONSE_ACTIONS = {
+    "Shelter": "🏠 Shelter in place",
+    "Evacuate": "🏃 Evacuate immediately",
+    "Prepare": "🎒 Prepare now",
+    "Monitor": "👀 Monitor conditions",
+    "Execute": "⚡ Execute plan",
+    "Avoid": "🚫 Avoid area",
+    "None": "ℹ️ Stay informed",
+}
+
+
 def geocode_location(location):
     """Convert location string to lat/lon using Nominatim (OSM)"""
     try:
@@ -74,6 +124,7 @@ def geocode_location(location):
     except Exception as e:
         print(f"Geocoding error: {e}", file=sys.stderr)
     return None, None, location
+
 
 def strip_temporal_qualifiers(text):
     """Remove temporal qualifiers from location for geocoding"""
@@ -93,6 +144,7 @@ def strip_temporal_qualifiers(text):
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
     return result.strip()
 
+
 def is_temporal_query(location):
     """Check if location string contains temporal query patterns"""
     location_lower = location.lower()
@@ -100,6 +152,7 @@ def is_temporal_query(location):
         if re.search(pattern, location_lower):
             return True
     return False
+
 
 def parse_target_time(location):
     """Parse target time from temporal query"""
@@ -143,10 +196,12 @@ def parse_target_time(location):
     
     return now
 
+
 def is_us_location(lat, lon):
     """Check if coordinates are roughly within US bounds"""
     # US approximate bounds: lat 24-49, lon -125 to -66
     return 24 <= lat <= 49 and -125 <= lon <= -66
+
 
 def get_nws_gridpoint(lat, lon):
     """Get NWS gridpoint for lat/lon"""
@@ -160,6 +215,7 @@ def get_nws_gridpoint(lat, lon):
     except Exception as e:
         print(f"NWS gridpoint error: {e}", file=sys.stderr)
     return None
+
 
 def get_nws_forecast(gridpoint):
     """Get detailed 12-hour forecast from NWS"""
@@ -176,6 +232,7 @@ def get_nws_forecast(gridpoint):
     except Exception as e:
         print(f"NWS forecast error: {e}", file=sys.stderr)
     return None
+
 
 def get_nws_hourly_forecast(gridpoint):
     """Get hourly forecast from NWS (~156 periods, 7 days)"""
@@ -199,6 +256,7 @@ def get_nws_hourly_forecast(gridpoint):
         print(f"NWS hourly forecast error: {e}", file=sys.stderr)
     return None
 
+
 def get_nws_grid_data(gridpoint):
     """Get structured grid data for accumulations"""
     try:
@@ -218,6 +276,7 @@ def get_nws_grid_data(gridpoint):
         print(f"NWS grid data error: {e}", file=sys.stderr)
     return None
 
+
 def get_nws_alerts(gridpoint):
     """Get active alerts for the zone"""
     try:
@@ -234,6 +293,46 @@ def get_nws_alerts(gridpoint):
     except Exception as e:
         print(f"NWS alerts error: {e}", file=sys.stderr)
     return []
+
+
+def get_station_observation(gridpoint):
+    """Get current observation from first observation station"""
+    try:
+        # observationStations is a URL to a list of stations
+        stations_url = gridpoint.get('observationStations', '')
+        if not stations_url:
+            return None
+        
+        # Fetch the list of stations
+        req = urllib.request.Request(stations_url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            stations = data.get('features', [])
+            if not stations:
+                return None
+        
+        # Parse station ID from first station
+        # Station identifier is in properties.stationIdentifier
+        first_station = stations[0]
+        station_id = first_station.get('properties', {}).get('stationIdentifier', '')
+        if not station_id:
+            # Fallback: parse from ID URL
+            station_id = first_station.get('id', '').split('/')[-1]
+        
+        if not station_id:
+            return None
+        
+        # Fetch latest observation
+        url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            return data.get('properties', {})
+    except Exception as e:
+        print(f"Station observation error: {e}", file=sys.stderr)
+    return None
+
 
 def get_airnow_current(lat, lon):
     """Get current AQI from AirNow API"""
@@ -252,6 +351,7 @@ def get_airnow_current(lat, lon):
         print(f"AirNow current error: {e}", file=sys.stderr)
     return None
 
+
 def get_airnow_forecast(lat, lon):
     """Get forecast AQI from AirNow API"""
     try:
@@ -269,6 +369,7 @@ def get_airnow_forecast(lat, lon):
         print(f"AirNow forecast error: {e}", file=sys.stderr)
     return None
 
+
 def parse_aqi_category(aqi):
     """Get AQI category info based on value"""
     for (low, high), info in AQI_CATEGORIES.items():
@@ -276,50 +377,67 @@ def parse_aqi_category(aqi):
             return info
     return AQI_CATEGORIES[(301, 500)]  # Hazardous fallback
 
-def get_wttr_forecast(location):
-    """Get forecast from wttr.in as fallback"""
-    try:
-        # Clean location for URL
-        clean_loc = location.replace(' ', '+')
-        
-        # Get 3-day forecast in text format
-        result = subprocess.run(
-            ['curl', '-s', f'wttr.in/{clean_loc}?format=v2'],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-        
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
-    except Exception as e:
-        print(f"wttr.in error: {e}", file=sys.stderr)
-    return None
 
-def get_wttr_current(location):
-    """Get current conditions from wttr.in"""
+def convert_c_to_f(celsius):
+    """Convert Celsius to Fahrenheit"""
+    if celsius is None:
+        return None
+    return (celsius * 9/5) + 32
+
+
+def convert_pa_to_inhg(pascals):
+    """Convert Pascals to inches of mercury"""
+    if pascals is None:
+        return None
+    return pascals / 3386.39
+
+
+def wind_direction_to_cardinal(degrees):
+    """Convert wind direction degrees to cardinal direction"""
+    if degrees is None:
+        return "N/A"
+    
+    directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                  "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    index = round(degrees / 22.5) % 16
+    return directions[index]
+
+
+def convert_kmh_to_mph(kmh):
+    """Convert km/h to mph"""
+    if kmh is None:
+        return None
+    return kmh * 0.621371
+
+
+def convert_meters_to_miles(meters):
+    """Convert meters to miles"""
+    if meters is None:
+        return None
+    return meters / 1609.34
+
+
+def parse_iso_datetime(dt_string):
+    """Parse ISO datetime string, with or without dateutil"""
+    if not dt_string:
+        return None
     try:
-        clean_loc = location.replace(' ', '+')
-        
-        result = subprocess.run(
-            ['curl', '-s', f'wttr.in/{clean_loc}?format=%C|%t|%w|%h|%p'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0 and result.stdout:
-            parts = result.stdout.strip().split('|')
-            return {
-                'condition': parts[0] if len(parts) > 0 else 'Unknown',
-                'temp': parts[1] if len(parts) > 1 else '',
-                'wind': parts[2] if len(parts) > 2 else '',
-                'humidity': parts[3] if len(parts) > 3 else '',
-                'precip': parts[4] if len(parts) > 4 else ''
-            }
-    except Exception as e:
-        print(f"wttr.in current error: {e}", file=sys.stderr)
-    return None
+        if DATEUTIL_AVAILABLE:
+            return date_parser.parse(dt_string)
+        else:
+            # Fallback: handle ISO format manually
+            # Try common ISO formats
+            for fmt in ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d']:
+                try:
+                    if fmt == '%Y-%m-%dT%H:%M:%S%z' and dt_string.endswith('Z'):
+                        dt_string = dt_string[:-1] + '+00:00'
+                    return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
+                except:
+                    continue
+            return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
+    except:
+        return None
+
 
 def format_period_emoji(desc):
     """Get emoji based on forecast description"""
@@ -341,6 +459,165 @@ def format_period_emoji(desc):
     elif 'fog' in lower or 'mist' in lower:
         return "🌫️"
     return "🌤️"
+
+
+def calculate_alert_priority(alert_props):
+    """Calculate alert priority score based on severity, urgency, certainty"""
+    severity = alert_props.get('severity', 'Unknown')
+    urgency = alert_props.get('urgency', 'Unknown')
+    certainty = alert_props.get('certainty', 'Unknown')
+    
+    severity_weight = ALERT_SEVERITY_WEIGHTS.get(severity, 0)
+    urgency_weight = ALERT_URGENCY_WEIGHTS.get(urgency, 0)
+    certainty_weight = ALERT_CERTAINTY_WEIGHTS.get(certainty, 0)
+    
+    return severity_weight + urgency_weight + certainty_weight
+
+
+def sort_alerts_by_priority(alerts):
+    """Sort alerts by priority (highest first)"""
+    def get_priority(alert):
+        props = alert.get('properties', {})
+        return calculate_alert_priority(props)
+    
+    return sorted(alerts, key=get_priority, reverse=True)
+
+
+def format_alert_datetime(dt_string):
+    """Format ISO datetime for display"""
+    dt = parse_iso_datetime(dt_string)
+    if not dt:
+        return dt_string
+    return dt.strftime('%I:%M %p').lstrip('0')
+
+
+def format_alert(alert):
+    """Format a single alert with enhanced details"""
+    props = alert.get('properties', {})
+    
+    event = props.get('event', 'Unknown Alert')
+    severity = props.get('severity', 'Unknown')
+    urgency = props.get('urgency', 'Unknown')
+    certainty = props.get('certainty', 'Unknown')
+    headline = props.get('headline', '')
+    description = props.get('description', '')
+    instruction = props.get('instruction', '')
+    onset = props.get('onset', '')
+    expires = props.get('expires', '')
+    response = props.get('response', 'Monitor')
+    
+    # Get severity styling
+    style = ALERT_SEVERITY_STYLES.get(severity, ALERT_SEVERITY_STYLES['Unknown'])
+    emoji = style['emoji']
+    badge = style['badge']
+    
+    # Get urgency tag
+    urgency_tag = ALERT_URGENCY_TAGS.get(urgency, ALERT_URGENCY_TAGS['Unknown'])
+    
+    # Get response action
+    response_action = ALERT_RESPONSE_ACTIONS.get(response, ALERT_RESPONSE_ACTIONS['Monitor'])
+    
+    # Build formatted output
+    lines = []
+    lines.append(f"{emoji} [**{badge}**] **{event}**")
+    lines.append(f"   {urgency_tag} | *{headline}*")
+    
+    # Time range
+    if onset and expires:
+        onset_str = format_alert_datetime(onset)
+        onset_date = parse_iso_datetime(onset)
+        expires_str = format_alert_datetime(expires)
+        expires_date = parse_iso_datetime(expires)
+        
+        if onset_date and expires_date and onset_date.date() == expires_date.date():
+            lines.append(f"   🕐 {onset_str} → {expires_str}")
+        else:
+            expires_full = expires_date.strftime('%a %I:%M %p').lstrip('0') if expires_date else expires_str
+            lines.append(f"   🕐 Until {expires_full}")
+    
+    # Description (first sentence only for brevity)
+    if description:
+        first_sentence = description.split('.')[0][:100]
+        if first_sentence:
+            lines.append(f"   📝 {first_sentence}...")
+    
+    # Response action
+    lines.append(f"   👉 {response_action}")
+    
+    return "\n".join(lines)
+
+
+def format_observation(obs, forecast_temp=None):
+    """Format current observation with optional forecast comparison"""
+    if not obs:
+        return None
+    
+    # Extract values
+    temp_c = obs.get('temperature', {}).get('value')
+    wind_speed_kmh = obs.get('windSpeed', {}).get('value')
+    wind_dir = obs.get('windDirection', {}).get('value')
+    pressure_pa = obs.get('barometricPressure', {}).get('value')
+    humidity = obs.get('relativeHumidity', {}).get('value')
+    dewpoint_c = obs.get('dewpoint', {}).get('value')
+    visibility_m = obs.get('visibility', {}).get('value')
+    text_desc = obs.get('textDescription', 'Unknown')
+    
+    # Convert units
+    temp_f = convert_c_to_f(temp_c) if temp_c is not None else None
+    wind_speed_mph = convert_kmh_to_mph(wind_speed_kmh) if wind_speed_kmh is not None else None
+    pressure_inhg = convert_pa_to_inhg(pressure_pa) if pressure_pa is not None else None
+    dewpoint_f = convert_c_to_f(dewpoint_c) if dewpoint_c is not None else None
+    visibility_mi = convert_meters_to_miles(visibility_m) if visibility_m is not None else None
+    
+    # Build output
+    lines = []
+    lines.append(f"🌡️ **Observed Conditions**")
+    
+    # Temperature with forecast comparison
+    if temp_f is not None:
+        temp_str = f"{round(temp_f)}°F"
+        if forecast_temp is not None:
+            diff = round(temp_f - forecast_temp)
+            if abs(diff) <= 2:
+                temp_str += f" (matches forecast 🎯)"
+            elif diff > 0:
+                temp_str += f" ({diff}° warmer than {round(forecast_temp)}° forecast)"
+            else:
+                temp_str += f" ({abs(diff)}° cooler than {round(forecast_temp)}° forecast)"
+        lines.append(f"   **Actually {temp_str}**")
+    
+    # Conditions
+    lines.append(f"   {format_period_emoji(text_desc)} {text_desc}")
+    
+    # Additional details
+    details = []
+    
+    if wind_speed_mph is not None and wind_dir is not None:
+        cardinal = wind_direction_to_cardinal(wind_dir)
+        details.append(f"💨 {cardinal} {round(wind_speed_mph)} mph")
+    elif wind_speed_mph is not None:
+        details.append(f"💨 {round(wind_speed_mph)} mph")
+    
+    if humidity is not None:
+        details.append(f"💧 {round(humidity)}% humidity")
+    
+    if dewpoint_f is not None:
+        details.append(f"🌫️ Dewpoint {round(dewpoint_f)}°F")
+    
+    if pressure_inhg is not None:
+        details.append(f"📊 Pressure {pressure_inhg:.2f} inHg")
+    
+    if visibility_mi is not None:
+        if visibility_mi >= 10:
+            details.append(f"👀 Visibility 10+ mi")
+        else:
+            details.append(f"👀 Visibility {round(visibility_mi, 1)} mi")
+    
+    if details:
+        lines.append(f"   {' • '.join(details)}")
+    
+    return "\n".join(lines)
+
 
 def format_nws_output(forecast, alerts, location_name):
     """Format NWS 12-hour forecast into clean, actionable output"""
@@ -387,26 +664,26 @@ def format_nws_output(forecast, alerts, location_name):
     
     return "\n".join(output)
 
-def parse_iso_datetime(dt_string):
-    """Parse ISO datetime string, with or without dateutil"""
-    if not dt_string:
+
+def format_enhanced_alerts(alerts):
+    """Format alerts with enhanced priority-based display"""
+    if not alerts:
         return None
-    try:
-        if DATEUTIL_AVAILABLE:
-            return date_parser.parse(dt_string)
-        else:
-            # Fallback: handle ISO format manually
-            # Try common ISO formats
-            for fmt in ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d']:
-                try:
-                    if fmt == '%Y-%m-%dT%H:%M:%S%z' and dt_string.endswith('Z'):
-                        dt_string = dt_string[:-1] + '+00:00'
-                    return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
-                except:
-                    continue
-            return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
-    except:
-        return None
+    
+    output = []
+    output.append("🚨 **Active Alerts**")
+    output.append("")
+    
+    # Sort by priority
+    sorted_alerts = sort_alerts_by_priority(alerts)
+    
+    for alert in sorted_alerts:
+        formatted = format_alert(alert)
+        output.append(formatted)
+        output.append("")  # Empty line between alerts
+    
+    return "\n".join(output)
+
 
 def format_hourly_output(periods, location_name, target_time=None):
     """Format hourly forecast into clean output"""
@@ -469,6 +746,7 @@ def format_hourly_output(periods, location_name, target_time=None):
     
     return "\n".join(output)
 
+
 def format_aqi_output(current_data, forecast_data, location_name):
     """Format AQI data into clean output"""
     output = []
@@ -509,6 +787,7 @@ def format_aqi_output(current_data, forecast_data, location_name):
     
     return "\n".join(output)
 
+
 def convert_to_inches(value, unit):
     """Convert various units to inches. Returns 0 if value <= 0."""
     if not value or value <= 0:
@@ -521,6 +800,7 @@ def convert_to_inches(value, unit):
     elif 'm' in unit_lower and 'mm' not in unit_lower:
         return value * 39.37    # meters to inches
     return value  # Assume inches if no unit matched
+
 
 def extract_accumulations_from_grid(grid_data):
     """Extract structured accumulation data from grid response"""
@@ -621,6 +901,7 @@ def extract_accumulations_from_grid(grid_data):
     
     return accumulations
 
+
 def format_accumulations_output(accumulations, location_name, forecast_periods=None):
     """Format structured accumulation data"""
     output = []
@@ -662,6 +943,7 @@ def format_accumulations_output(accumulations, location_name, forecast_periods=N
     
     return "\n".join(output)
 
+
 def parse_accumulations_from_text(periods):
     """Fallback: Parse accumulation data from text forecast"""
     import re
@@ -698,6 +980,54 @@ def parse_accumulations_from_text(periods):
     
     return accumulations
 
+
+def get_wttr_forecast(location):
+    """Get forecast from wttr.in as fallback"""
+    try:
+        # Clean location for URL
+        clean_loc = location.replace(' ', '+')
+        
+        # Get 3-day forecast in text format
+        result = subprocess.run(
+            ['curl', '-s', f'wttr.in/{clean_loc}?format=v2'],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except Exception as e:
+        print(f"wttr.in error: {e}", file=sys.stderr)
+    return None
+
+
+def get_wttr_current(location):
+    """Get current conditions from wttr.in"""
+    try:
+        clean_loc = location.replace(' ', '+')
+        
+        result = subprocess.run(
+            ['curl', '-s', f'wttr.in/{clean_loc}?format=%C|%t|%w|%h|%p'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0 and result.stdout:
+            parts = result.stdout.strip().split('|')
+            return {
+                'condition': parts[0] if len(parts) > 0 else 'Unknown',
+                'temp': parts[1] if len(parts) > 1 else '',
+                'wind': parts[2] if len(parts) > 2 else '',
+                'humidity': parts[3] if len(parts) > 3 else '',
+                'precip': parts[4] if len(parts) > 4 else ''
+            }
+    except Exception as e:
+        print(f"wttr.in current error: {e}", file=sys.stderr)
+    return None
+
+
 def format_wttr_output(forecast_text, current, location_name):
     """Format wttr.in output into consistent structure"""
     output = []
@@ -720,6 +1050,7 @@ def format_wttr_output(forecast_text, current, location_name):
     
     return "\n".join(output)
 
+
 def main():
     if len(sys.argv) < 2:
         print("""Usage: get_weather.py 'Location Name' [options]
@@ -728,11 +1059,14 @@ Options:
   --source nws|wttr|auto     Force specific source (default: auto)
   --aqi                      Include AirNow AQI data
   --hourly                   Force hourly forecast (auto-detected for time queries)
+  --current                  Show current station observation vs forecast
   
 Examples:
   get_weather.py "Boston, MA"
   get_weather.py "Boston at 8 PM"       # Auto-detects hourly
   get_weather.py "Boston" --aqi         # Weather + AQI
+  get_weather.py "Boston" --current     # Observed vs forecast
+  get_weather.py "Seattle" --aqi --current  # All features combined
 """)
         sys.exit(1)
     
@@ -740,6 +1074,7 @@ Examples:
     source_pref = 'auto'
     show_aqi = False
     force_hourly = False
+    show_current = False
     
     # Parse arguments
     if '--source' in sys.argv:
@@ -753,9 +1088,12 @@ Examples:
     if '--hourly' in sys.argv:
         force_hourly = True
     
+    if '--current' in sys.argv:
+        show_current = True
+    
     # Detect temporal query
-    is_temporal = is_temporal_query(location) or force_hourly
-    target_time = parse_target_time(location) if is_temporal else None
+    temporal_detected = is_temporal_query(location) or force_hourly
+    target_time = parse_target_time(location) if temporal_detected else None
     
     # Step 1: Geocode (strip temporal qualifiers first for cleaner geocoding)
     clean_location = strip_temporal_qualifiers(location)
@@ -775,16 +1113,34 @@ Examples:
         use_nws = is_us_location(lat, lon)
     
     outputs = []
+    current_obs = None
+    forecast_temp = None
     
     # Step 3: Fetch from appropriate source
     if use_nws:
         gridpoint = get_nws_gridpoint(lat, lon)
         
         if gridpoint:
+            # Get current observation if requested
+            if show_current:
+                current_obs = get_station_observation(gridpoint)
+            
             # Get appropriate forecast type
-            if is_temporal:
+            if temporal_detected:
                 hourly_forecast = get_nws_hourly_forecast(gridpoint)
                 if hourly_forecast:
+                    # Get forecast temperature for comparison with observation
+                    if show_current and current_obs:
+                        # Get current hour forecast
+                        now = datetime.now()
+                        for period in hourly_forecast.get('periods', []):
+                            period_time = parse_iso_datetime(period.get('startTime', ''))
+                            if period_time:
+                                period_naive = period_time.replace(tzinfo=None) if period_time.tzinfo else period_time
+                                if abs((period_naive - now).total_seconds()) / 3600 < 1:
+                                    forecast_temp = period.get('temperature')
+                                    break
+                    
                     outputs.append(format_hourly_output(
                         hourly_forecast.get('periods', []),
                         display_name,
@@ -795,13 +1151,33 @@ Examples:
                     forecast = get_nws_forecast(gridpoint)
                     if forecast:
                         alerts = get_nws_alerts(gridpoint)
+                        # Get forecast temp from first period for comparison
+                        if show_current and current_obs:
+                            periods = forecast.get('periods', [])
+                            if periods:
+                                forecast_temp = periods[0].get('temperature')
+                        
                         outputs.append(format_nws_output(forecast, alerts, display_name))
+                        
+                        # Add enhanced alerts if present
+                        if alerts:
+                            outputs.append(format_enhanced_alerts(alerts))
             else:
                 # Regular 12-hour forecast
                 forecast = get_nws_forecast(gridpoint)
                 if forecast:
                     alerts = get_nws_alerts(gridpoint)
+                    # Get forecast temp from first period for comparison
+                    if show_current and current_obs:
+                        periods = forecast.get('periods', [])
+                        if periods:
+                            forecast_temp = periods[0].get('temperature')
+                    
                     outputs.append(format_nws_output(forecast, alerts, display_name))
+                    
+                    # Add enhanced alerts if present
+                    if alerts:
+                        outputs.append(format_enhanced_alerts(alerts))
                     
                     # Check if user asked about winter weather/storms - show accumulations
                     location_lower = location.lower()
@@ -809,6 +1185,16 @@ Examples:
                         grid_data = get_nws_grid_data(gridpoint)
                         accums = extract_accumulations_from_grid(grid_data)
                         outputs.append(format_accumulations_output(accums, display_name, forecast.get('periods', [])))
+            
+            # Add current observation if requested
+            if show_current:
+                formatted_obs = format_observation(current_obs, forecast_temp)
+                if formatted_obs:
+                    # Insert observation after the forecast, before any other data
+                    outputs.insert(1, formatted_obs)
+                else:
+                    outputs.append("\n🌡️ **Current Observation**")
+                    outputs.append("   *Station data temporarily unavailable*")
             
             # Get AQI if requested (US only has AirNow)
             if show_aqi:
@@ -831,6 +1217,10 @@ Examples:
         outputs.append("*AirNow AQI data is only available for US locations.*")
         outputs.append("")
     
+    if show_current and not use_nws:
+        # Note: wttr.in current conditions shown, but not a station comparison
+        pass
+    
     forecast_text = get_wttr_forecast(location)
     current = get_wttr_current(location)
     
@@ -840,6 +1230,7 @@ Examples:
     else:
         print(f"❌ Unable to fetch weather for: {location}")
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()
