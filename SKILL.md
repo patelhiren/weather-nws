@@ -19,6 +19,7 @@ This skill operates in **5 modes** to match your query:
 | ⏰ **Hourly Forecast** | Time-specific query detected | Hour-by-hour breakdown (~156 periods, 7 days) |
 | 🌨️ **Winter Storm** | Keywords like "snow," "storm" | 12-hour + structured accumulation data |
 | 💨 **AQI Report** | `--aqi` flag included | Current + forecast air quality index |
+| 🌡️ **Observed vs Forecast** | `--current` flag included | Current station readings with comparison |
 | 🌍 **Global Fallback** | Non-US location | wttr.in data (less detailed) |
 
 ## AirNow API Key (Optional but Recommended)
@@ -182,12 +183,84 @@ python3 ./scripts/get_weather.py "Seattle" --aqi
 ```
 → Weather + AQI data with health recommendations
 
+**Observed vs Forecast:**
+```bash
+python3 ./scripts/get_weather.py "Boston" --current
+```
+→ Current station readings with forecast comparison
+
+**Combined features:**
+```bash
+python3 ./scripts/get_weather.py "Seattle" --aqi --current
+```
+→ Full weather report with all data sources
+
+## Observed vs Forecast (`--current`)
+
+Shows actual measured conditions from the nearest NWS observation station alongside the forecast:
+
+```
+🌡️ **Observed Conditions**
+   **Actually 43°F (3° warmer than 40° forecast)**
+   ☁️ Partly Cloudy
+   💨 WNW 8 mph • 💧 36% humidity • 🌫️ Dewpoint 18°F • 📊 Pressure 29.86 inHg • 👀 Visibility 10+ mi
+```
+
+**Fields shown:**
+- Temperature with forecast delta
+- Conditions description
+- Wind speed and direction
+- Humidity percentage
+- Dewpoint
+- Barometric pressure (inHg)
+- Visibility
+
+## Alert Priorities
+
+When alerts are active, they're displayed with enhanced formatting using severity/urgency/certainty weighting:
+
+| Factor | Weights |
+|--------|---------|
+| **Severity** | Extreme (4) > Severe (3) > Moderate (2) > Minor (1) |
+| **Urgency** | Immediate (3) > Expected (2) > Future (1) |
+| **Certainty** | Observed (3) > Likely (2) > Possible (1) |
+
+**Severity Styling:**
+| Severity | Emoji | Badge |
+|----------|-------|-------|
+| Extreme | ⚫ | EXTREME |
+| Severe | 🔴 | SEVERE |
+| Moderate | 🟠 | MODERATE |
+| Minor | 🟡 | MINOR |
+
+**Alert display includes:**
+- Event name with severity badge
+- Urgency tag: ⏰ Immediate / 📅 Expected / 🔮 Future
+- Time range (onset → expires)
+- First sentence of description
+- Recommended response action
+
+**Example:**
+```
+🟠 [**MODERATE**] **Winter Storm Warning**
+   📅 Expected | *Winter Storm Warning from 6 PM to 10 AM EST*
+   🕐 6:00 PM → 10:00 AM
+   📝 Heavy snow expected with accumulations of 6-10 inches...
+   👉 🎒 Prepare now
+```
+
 ## References
 
 - [references/nws-api.md](references/nws-api.md) — NWS API endpoint details
 - [references/airnow-api.md](references/airnow-api.md) — AirNow API documentation
 
 ## Changelog
+
+### v1.2.0 (2026-02-26) - Phase 2
+- Added `--current` flag for station observations vs forecast comparison
+- Enhanced alert formatting with severity/urgency/certainty priority scoring
+- Added temperature delta comparison (warmer/cooler than forecast)
+- Added full observation details: humidity, dewpoint, pressure, visibility
 
 ### v1.1.0 (2026-02-26)
 - Added hourly forecast with temporal query auto-detection
