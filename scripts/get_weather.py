@@ -239,7 +239,7 @@ def get_airnow_current(lat, lon):
     """Get current AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://api.airnowapi.org/aq/current/observation/latLong/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://www.airnowapi.org/aq/observation/latLong/current/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
@@ -256,7 +256,7 @@ def get_airnow_forecast(lat, lon):
     """Get forecast AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://api.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://www.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
