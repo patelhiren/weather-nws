@@ -757,8 +757,9 @@ Examples:
     is_temporal = is_temporal_query(location) or force_hourly
     target_time = parse_target_time(location) if is_temporal else None
     
-    # Step 1: Geocode
-    lat, lon, display_name = geocode_location(location)
+    # Step 1: Geocode (strip temporal qualifiers first for cleaner geocoding)
+    clean_location = strip_temporal_qualifiers(location)
+    lat, lon, display_name = geocode_location(clean_location)
     
     if lat is None or lon is None:
         print(f"❌ Could not locate: {location}")
