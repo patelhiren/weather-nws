@@ -7,7 +7,7 @@ metadata: {"clawdhub":{"emoji":"🌦️"}}
 
 # Weather NWS Skill
 
-Get detailed US weather forecasts from the National Weather Service with automatic global fallback.
+Get detailed US weather forecasts from the National Weather Service with automatic global fallback, hourly forecasts, air quality data, and structured winter storm accumulations.
 
 ## What This Skill Does
 
@@ -21,47 +21,45 @@ This skill operates in **5 modes** to match your query:
 | 💨 **AQI Report** | `--aqi` flag included | Current + forecast air quality index |
 | 🌍 **Global Fallback** | Non-US location | wttr.in data (less detailed) |
 
-### Hourly Auto-Detection
+## AirNow API Key (Optional but Recommended)
 
-The skill automatically detects time-specific language and switches to hourly forecast:
+The AirNow API **works without a key** but has limitations:
 
-```
-"Boston at 8 PM"        → ⏰ Hourly mode
-"Boston tonight"         → ⏰ Hourly mode
-"Boston tomorrow morning" → ⏰ Hourly mode
-"Boston at 5:30"         → ⏰ Hourly mode
-"When will it stop raining?" → ⏰ Hourly mode
-```
+| Without API Key | With API Key |
+|-----------------|--------------|
+| Rate limited (requests may fail) | Higher rate limits |
+| No guaranteed availability | Priority access |
+| May return empty results | Reliable AQI data |
 
-**Patterns detected:**
-- `at 8 PM`, `at 5:30`, etc.
-- `tonight`, `this afternoon`
-- `tomorrow morning/afternoon/night`
-- `when will...`, `how long until...`
+### Getting an API Key
 
-### Air Quality (`--aqi`)
+1. Visit: https://www.airnow.gov/aqi/aqi-resources/data-forecasters/airnow-api/
+2. Click "Request an AirNow API Key"
+3. Fill out the form (free for personal use)
+4. Key arrives via email within 1-2 business days
 
-Adds AirNow AQI data to any forecast:
+### Setting the API Key
 
-```
-python3 ./scripts/get_weather.py "Boston" --aqi
+**Option 1: Environment Variable (Recommended)**
+```bash
+export AIRNOW_API_KEY="your-api-key-here"
 ```
 
-**Output includes:**
-- Current AQI with color-coded emoji (🟢 🟡 🟠 🔴 🟣 🔵)
-- Primary pollutant (PM2.5, O3, etc.)
-- Health recommendation based on category
-- 3-day AQI forecast
-
-**AQI Categories:**
-| Range | Category | Emoji | Recommendation |
-|-------|----------|-------|------------------|
-| 0-50 | Good | 🟢 | Enjoy outdoor activities |
-| 51-100 | Moderate | 🟡 | Sensitive groups limit exertion |
-| 101-150 | Unhealthy for Sensitive Groups | 🟠 | Children/elderly limit outdoor activities |
-| 151-200 | Unhealthy | 🔴 | Everyone reduce outdoor exertion |
-| 201-300 | Very Unhealthy | 🟣 | Avoid outdoor activities |
-| 301-500 | Hazardous | 🔵 | Stay indoors — health alert |
+**Option 2: OpenClaw Config (Persistent)**
+Add to your OpenClaw config under `skills.entries.weather-nws.env`:
+```json
+{
+  "skills": {
+    "entries": {
+      "weather-nws": {
+        "env": {
+          "AIRNOW_API_KEY": "your-api-key-here"
+        }
+      }
+    }
+  }
+}
+```
 
 ## When to Use
 
@@ -98,15 +96,55 @@ python3 ./scripts/get_weather.py "Chicago" --hourly
 python3 ./scripts/get_weather.py "Seattle" --aqi
 ```
 
+## Hourly Auto-Detection
+
+The skill automatically detects time-specific language and switches to hourly forecast:
+
+```
+"Boston at 8 PM"        → ⏰ Hourly mode
+"Boston tonight"         → ⏰ Hourly mode
+"Boston tomorrow morning" → ⏰ Hourly mode
+"Boston at 5:30"         → ⏰ Hourly mode
+"When will it stop raining?" → ⏰ Hourly mode
+```
+
+**Patterns detected:**
+- `at 8 PM`, `at 5:30`, etc.
+- `tonight`, `this afternoon`
+- `tomorrow morning/afternoon/night`
+- `when will...`, `how long until...`
+
+## Air Quality (`--aqi`)
+
+Adds AirNow AQI data to any forecast:
+
+```bash
+python3 ./scripts/get_weather.py "Boston" --aqi
+```
+
+**Output includes:**
+- Current AQI with color-coded emoji (🟢 🟡 🟠 🔴 🟣 🔵)
+- Primary pollutant (PM2.5, O3, etc.)
+- Health recommendation based on category
+- 3-day AQI forecast
+
+**AQI Categories:**
+| Range | Category | Emoji | Recommendation |
+|-------|----------|-------|------------------|
+| 0-50 | Good | 🟢 | Enjoy outdoor activities |
+| 51-100 | Moderate | 🟡 | Sensitive groups limit exertion |
+| 101-150 | Unhealthy for Sensitive Groups | 🟠 | Children/elderly limit outdoor activities |
+| 151-200 | Unhealthy | 🔴 | Everyone reduce outdoor exertion |
+| 201-300 | Very Unhealthy | 🟣 | Avoid outdoor activities |
+| 301-500 | Hazardous | 🔵 | Stay indoors — health alert |
+
 ## Output Format
 
 The script provides consistent output regardless of source:
 
-**Header:** Location and current alert status  
-**Today → Tonight → Tomorrow:** Structured timeline  
-**Accumulations:** Specific snow/rain amounts when available (structured from grid data)  
-**Hourly (if requested):** Time → temp → conditions → precipitation probability  
-**AQI (if requested):** Current + forecast air quality with health guidance  
+**Header:** Location and current alert status
+**Today → Tonight → Tomorrow:** Structured timeline
+**Accumulation:** Specific snow/rain amounts when available
 **Bottom Line:** Actionable summary with timing
 
 ## Implementation
@@ -114,66 +152,51 @@ The script provides consistent output regardless of source:
 The script handles:
 1. Geocoding location to lat/long
 2. Detecting if location is in US
-3. Detecting temporal queries and auto-switching to hourly
-4. Calling NWS API for US locations (detailed accumulation)
-5. Getting structured grid data for snow/ice amounts when relevant
-6. Fetching AirNow AQI data when `--aqi` flag is used
-7. Falling back to wttr.in for non-US (basic forecast)
-8. Formatting consistent output with emojis and structure
-
-## How It Decides
-
-| Scenario | Action |
-|----------|--------|
-| Location in US, no time specified | NWS 12-hour forecast + alerts |
-| Location in US, time detected | NWS hourly forecast (~156 periods) |
-| Location in US, winter keywords | NWS 12-hour + structured accumulation data |
-| `--aqi` flag included | NWS/AirNow AQI data appended |
-| Location outside US | wttr.in global fallback |
-| NWS API fails | wttr.in fallback for US too |
+3. Calling NWS API for US locations (detailed accumulation)
+4. Falling back to wttr.in for non-US (basic forecast)
+5. Formatting consistent output with emojis and structure
 
 ## Limitations
 
-| Source | Limitations |
-|--------|-------------|
-| **NWS** | US only, requires internet, rate limited to ~1 req/2 sec |
-| **NWS Hourly** | ~156 periods max (7 days), some gaps possible |
-| **NWS Grid Data** | Structured accumulations only available for forecast office coverage area |
-| **AirNow AQI** | US only, may have gaps in rural areas, requires API key for best results |
-| **wttr.in** | Global, less detail on accumulation, no official watches/warnings |
-
-**Known gaps:**
-- International locations don't get AQI (no global AirNow equivalent)
-- Grid data accumulations may not load for some remote US areas
-- Hourly forecast is time-restricted (7 days forward max)
+- **NWS:** US only, requires internet, rate limited
+- **wttr.in:** Global, less detail on accumulation, no official watches/warnings
+- **AirNow:** US + Canada only, requires API key for reliable access
 
 ## Examples
 
 **US winter storm query:**
-```
+```bash
 python3 ./scripts/get_weather.py "Boston, MA"
 ```
-→ Returns NWS data with accumulation estimates if snow keywords detected
-
-**Hourly forecast:**
-```
-python3 ./scripts/get_weather.py "New York at 8 PM"
-```
-→ Returns hours around 8 PM with precipitation probability
-
-**Air quality check:**
-```
-python3 ./scripts/get_weather.py "Los Angeles" --aqi
-```
-→ Returns weather + current/forecast AQI
+→ Returns NWS data with accumulation estimates
 
 **International location:**
-```
+```bash
 python3 ./scripts/get_weather.py "Toronto, Canada"
 ```
 → Automatically uses wttr.in, notes it's non-US
 
+**With air quality:**
+```bash
+python3 ./scripts/get_weather.py "Seattle" --aqi
+```
+→ Weather + AQI data with health recommendations
+
 ## References
 
-- [NWS API Reference](references/nws-api.md) — NWS API endpoint details
-- [AirNow API Reference](references/airnow-api.md) — EPA AirNow API documentation
+- [references/nws-api.md](references/nws-api.md) — NWS API endpoint details
+- [references/airnow-api.md](references/airnow-api.md) — AirNow API documentation
+
+## Changelog
+
+### v1.1.0 (2026-02-26)
+- Added hourly forecast with temporal query auto-detection
+- Added AirNow AQI integration (`--aqi` flag)
+- Added structured grid data for winter storm accumulations
+- Fixed AirNow API endpoint URLs
+
+### v1.0.0 (2026-02-22)
+- Initial release: NWS API with wttr.in fallback
+- 12-hour forecast periods
+- Alert integration
+- Accumulation estimates from text parsing
