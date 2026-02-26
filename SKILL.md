@@ -34,8 +34,8 @@ The AirNow API **works without a key** but has limitations:
 
 ### Getting an API Key
 
-1. Visit: https://www.airnow.gov/aqi/aqi-resources/data-forecasters/airnow-api/
-2. Click "Request an AirNow API Key"
+1. Visit: https://docs.airnowapi.org/account/request/
+2. Fill out the request form (free for personal use)
 3. Fill out the form (free for personal use)
 4. Key arrives via email within 1-2 business days
 
