@@ -11,7 +11,7 @@ Get detailed US weather forecasts from the National Weather Service with automat
 
 ## What This Skill Does
 
-This skill operates in **5 modes** to match your query:
+This skill operates in **8 modes** to match your query:
 
 | Mode | When It Activates | What You Get |
 |------|-------------------|--------------|
@@ -20,6 +20,9 @@ This skill operates in **5 modes** to match your query:
 | 🌨️ **Winter Storm** | Keywords like "snow," "storm" | 12-hour + structured accumulation data |
 | 💨 **AQI Report** | `--aqi` flag included | Current + forecast air quality index |
 | 🌡️ **Observed vs Forecast** | `--current` flag included | Current station readings with comparison |
+| ☀️ **Astronomical Times** | `--astro` flag included | Sunrise/sunset, twilight, moon phase |
+| ✈️ **Aviation Forecast** | `--taf` flag included | Terminal Aerodrome Forecast (TAF) |
+| 🔥 **Fire Weather** | `--fire` flag included | Fire danger, red flag warnings |
 | 🌍 **Global Fallback** | Non-US location | wttr.in data (less detailed) |
 
 ## AirNow API Key (Optional but Recommended)
@@ -36,8 +39,7 @@ The AirNow API **works without a key** but has limitations:
 
 1. Visit: https://docs.airnowapi.org/account/request/
 2. Fill out the request form (free for personal use)
-3. Fill out the form (free for personal use)
-4. Key arrives via email within 1-2 business days
+3. Key arrives via email within 1-2 business days
 
 ### Setting the API Key
 
@@ -195,6 +197,14 @@ python3 ./scripts/get_weather.py "Seattle" --aqi --current
 ```
 → Full weather report with all data sources
 
+**Phase 3 features:**
+```bash
+python3 ./scripts/get_weather.py "Boston" --astro       # Sunrise/sunset times
+python3 ./scripts/get_weather.py "SFO" --taf           # Aviation forecast
+python3 ./scripts/get_weather.py "California" --fire    # Fire weather
+python3 ./scripts/get_weather.py "Denver" --astro --aqi --current  # Everything!
+```
+
 ## Observed vs Forecast (`--current`)
 
 Shows actual measured conditions from the nearest NWS observation station alongside the forecast:
@@ -254,7 +264,75 @@ When alerts are active, they're displayed with enhanced formatting using severit
 - [references/nws-api.md](references/nws-api.md) — NWS API endpoint details
 - [references/airnow-api.md](references/airnow-api.md) — AirNow API documentation
 
+## Phase 3 Features
+
+### Astronomical Times (`--astro`)
+
+Shows sunrise, sunset, civil twilight, and moon phase information:
+
+```bash
+python3 ./scripts/get_weather.py "Boston" --astro
+```
+
+**Output includes:**
+- 🌅 **Sunrise:** Time with countdown/ago
+- 🌇 **Sunset:** Time with countdown/ago  
+- 💡 **Civil Twilight:** Dawn and dusk times (useful for runners, cyclists)
+- ⏱️ **Daylight:** Total hours of daylight
+- 🌙 **Moon:** Current phase with illumination percentage
+
+**Example:**
+```
+☀️ **Astronomical Times — Boston**
+
+🌅 **Sunrise:** 6:22 AM (12h ago)
+🌇 **Sunset:** 5:31 PM (in 2h)
+💡 **Civil Twilight:** 5:55 AM – 5:58 PM
+⏱️ **Daylight:** 11h 9m
+🌙 **Moon:** 🌓 First Quarter (50.0%)
+```
+
+### Aviation Forecast (`--taf`)
+
+Shows Terminal Aerodrome Forecast (TAF) for the nearest aviation weather station:
+
+```bash
+python3 ./scripts/get_weather.py "SFO" --taf
+```
+
+**Note:** TAFs are designed for aviation use. The report provides:
+- Station identifier
+- Wind conditions and direction
+- Visibility
+- Cloud ceiling information
+
+**Important:** *This is informational only. Always check official sources for flight planning.*
+
+### Fire Weather (`--fire`)
+
+Shows fire danger information for wildfire-prone areas:
+
+```bash
+python3 ./scripts/get_weather.py "California" --fire
+```
+
+**Output includes:**
+- Fire danger level (if elevated)
+- 🔥 **Red Flag Warnings** (if active)
+- Fire weather zone forecast
+- Source attribution
+
+**Red Flag Warnings** indicate critical fire weather conditions (low humidity + high winds).
+
 ## Changelog
+
+### v1.3.0 (2026-02-26) - Phase 3
+- Added `--astro` flag for sunrise/sunset, twilight, and moon phase
+- Added `--taf` flag for Aviation Terminal Aerodrome Forecasts
+- Added `--fire` flag for fire weather danger and red flag warnings
+- Added moon phase calculation (waxing/waning, illumination %)
+- Added daylight hours calculation
+- Added civil twilight detection for runners/cyclists
 
 ### v1.2.0 (2026-02-26) - Phase 2
 - Added `--current` flag for station observations vs forecast comparison

@@ -4,6 +4,7 @@ Unified weather fetcher with US (NWS) priority and global fallback (wttr.in)
 Provides consistent, actionable output format.
 Phase 1: Hourly forecast, AirNow AQI, structured grid data for accumulations
 Phase 2: Station observations (--current), enhanced alert formatting with priorities
+Phase 3: Astronomical times (--astro), aviation TAFs (--taf), fire weather (--fire)
 """
 
 import sys
@@ -376,6 +377,367 @@ def parse_aqi_category(aqi):
         if low <= aqi <= high:
             return info
     return AQI_CATEGORIES[(301, 500)]  # Hazardous fallback
+
+
+# ===== Phase 3: Astronomical, Aviation, Fire Weather =====
+
+def get_astronomical_data(gridpoint):
+    """Extract astronomical data from gridpoint (sunrise, sunset, twilight)"""
+    try:
+        astronomical = gridpoint.get('astronomicalData', {})
+        if astronomical:
+            return {
+                'sunrise': astronomical.get('sunrise'),
+                'sunset': astronomical.get('sunset'),
+                'civilTwilightBegin': astronomical.get('civilTwilightBegin'),
+                'civilTwilightEnd': astronomical.get('civilTwilightEnd')
+            }
+    except Exception as e:
+        print(f"Astronomical data error: {e}", file=sys.stderr)
+    return None
+
+
+def calculate_moon_phase(date):
+    """Calculate approximate moon phase (0-7, where 0=new, 4=full)"""
+    try:
+        # Known new moon: January 6, 2000
+        import datetime
+        known_new_moon = datetime.datetime(2000, 1, 6, 18, 14, 0)
+        
+        if isinstance(date, str):
+            date = datetime.datetime.fromisoformat(date.replace('Z', '+00:00').replace('+00:00', ''))
+        elif isinstance(date, datetime.date) and not isinstance(date, datetime.datetime):
+            date = datetime.datetime.combine(date, datetime.time())
+        
+        # Lunar cycle is 29.53059 days
+        lunar_cycle = 29.53059
+        diff = (date - known_new_moon).total_seconds() / 86400
+        
+        # Calculate days into current cycle
+        days_into_cycle = diff % lunar_cycle
+        
+        # Calculate phase (0-7)
+        phase = int((days_into_cycle / lunar_cycle) * 8) % 8
+        
+        # Phase names
+        phase_names = [
+            "🌑 New Moon",
+            "🌒 Waxing Crescent",
+            "🌓 First Quarter",
+            "🌔 Waxing Gibbous",
+            "🌕 Full Moon",
+            "🌖 Waning Gibbous",
+            "🌗 Last Quarter",
+            "🌘 Waning Crescent"
+        ]
+        
+        # Phase illumination percentage
+        illumination = (1 - abs(phase - 4) / 4) * 100
+        if phase > 4:
+            illumination = (2 - abs(phase - 4) / 4) * 100
+        
+        return {
+            'phase': phase,
+            'name': phase_names[phase],
+            'illumination': round(illumination, 1)
+        }
+    except Exception as e:
+        print(f"Moon phase calculation error: {e}", file=sys.stderr)
+        return {'phase': 0, 'name': '🌑 Moon phase unknown', 'illumination': 0}
+
+
+def format_time_until(iso_datetime):
+    """Format time until/ago as human-readable string"""
+    try:
+        from datetime import datetime, timezone
+        
+        if not iso_datetime:
+            return ""
+        
+        dt = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
+        now = datetime.now(dt.tzinfo if dt.tzinfo else timezone.utc)
+        
+        diff = dt - now
+        hours = abs(diff.total_seconds()) / 3600
+        
+        if diff.total_seconds() > 0:  # In the future
+            if hours < 1:
+                mins = int(hours * 60)
+                return f"(in {mins} min)"
+            elif hours < 24:
+                return f"(in {int(hours)}h)"
+            else:
+                days = int(hours / 24)
+                rem_hours = int(hours % 24)
+                return f"(in {days}d {rem_hours}h)"
+        else:  # In the past
+            if hours < 1:
+                mins = int(hours * 60)
+                return f"({mins} min ago)"
+            elif hours < 24:
+                return f"({int(hours)}h ago)"
+            else:
+                days = int(hours / 24)
+                return f"({days}d ago)"
+    except Exception:
+        return ""
+
+
+def calculate_daylight_hours(sunrise, sunset):
+    """Calculate hours of daylight"""
+    try:
+        from datetime import datetime
+        
+        sr = datetime.fromisoformat(sunrise.replace('Z', '+00:00'))
+        ss = datetime.fromisoformat(sunset.replace('Z', '+00:00'))
+        
+        diff = ss - sr
+        hours = diff.total_seconds() / 3600
+        hours_int = int(hours)
+        mins = int((hours - hours_int) * 60)
+        
+        return f"{hours_int}h {mins}m"
+    except Exception:
+        return "?"
+
+
+def format_astronomical_output(astro_data, location_name):
+    """Format astronomical data into readable output"""
+    if not astro_data:
+        return ""
+    
+    output = []
+    output.append(f"☀️ **Astronomical Times — {location_name}**")
+    output.append("")
+    
+    # Parse and format times
+    sunrise = astro_data.get('sunrise')
+    sunset = astro_data.get('sunset')
+    twilight_begin = astro_data.get('civilTwilightBegin')
+    twilight_end = astro_data.get('civilTwilightEnd')
+    
+    today = datetime.now().strftime('%Y-%m-%d')
+    moon_info = calculate_moon_phase(today)
+    
+    if sunrise:
+        time_str = format_simple_time(sunrise)
+        until = format_time_until(sunrise)
+        output.append(f"🌅 **Sunrise:** {time_str} {until}")
+    
+    if sunset:
+        time_str = format_simple_time(sunset)
+        until = format_time_until(sunset)
+        output.append(f"🌇 **Sunset:** {time_str} {until}")
+    
+    if twilight_begin and twilight_end:
+        begin_str = format_simple_time(twilight_begin)
+        end_str = format_simple_time(twilight_end)
+        output.append(f"💡 **Civil Twilight:** {begin_str} – {end_str}")
+    
+    if sunrise and sunset:
+        daylight = calculate_daylight_hours(sunrise, sunset)
+        output.append(f"⏱️ **Daylight:** {daylight}")
+    
+    if moon_info:
+        output.append(f"🌙 **Moon:** {moon_info['name']} ({moon_info['illumination']}%)")
+    
+    return "\n".join(output)
+
+
+def format_simple_time(iso_datetime):
+    """Format ISO datetime to simple time string (e.g., '6:32 AM')"""
+    try:
+        dt = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
+        return dt.strftime('%-I:%M %p')
+    except Exception:
+        return iso_datetime
+
+
+def get_aviation_taf(gridpoint):
+    """Get Terminal Aerodrome Forecast (TAF) for the nearest station"""
+    try:
+        stations = gridpoint.get('observationStations', [])
+        if not stations:
+            return None
+        
+        # Get first station ID
+        station_url = stations[0]
+        station_id = station_url.split('/')[-1]
+        
+        url = f"https://api.weather.gov/stations/{station_id}/tafs"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            features = data.get('features', [])
+            if features:
+                return features[0].get('properties', {})
+    except Exception as e:
+        print(f"TAF fetch error: {e}", file=sys.stderr)
+    return None
+
+
+def decode_taf_wind(wind_str):
+    """Decode TAF wind string (e.g., '27012KT' or 'VRB05KT')"""
+    import re
+    
+    if not wind_str:
+        return "Calm"
+    
+    # Variable wind
+    if wind_str.startswith('VRB'):
+        match = re.search(r'VRB(\d+)KT', wind_str)
+        if match:
+            return f"Variable {match.group(1)} kt"
+        return "Variable"
+    
+    # Gusting wind
+    match = re.search(r'(\d{3})(\d{2,3})G(\d{2,3})KT', wind_str)
+    if match:
+        direction = int(match.group(1))
+        speed = int(match.group(2))
+        gust = int(match.group(3))
+        cardinal = wind_direction_to_cardinal(direction)
+        return f"{cardinal} {speed} kt, gusts {gust} kt"
+    
+    # Regular wind
+    match = re.search(r'(\d{3})(\d{2,3})KT', wind_str)
+    if match:
+        direction = int(match.group(1))
+        speed = int(match.group(2))
+        cardinal = wind_direction_to_cardinal(direction)
+        return f"{cardinal} {speed} kt"
+    
+    return wind_str
+
+
+def format_taf_output(taf_data, location_name):
+    """Format TAF data into readable output"""
+    if not taf_data:
+        return ""
+    
+    output = []
+    output.append(f"✈️ **Aviation Forecast (TAF) — {location_name}**")
+    output.append("")
+    
+    # Station info
+    station_id = taf_data.get('stationId', 'Unknown')
+    output.append(f"📍 **Station:** {station_id}")
+    
+    # Raw TAF text (if available, decoded)
+    raw_taf = taf_data.get('rawTAF', '')
+    if raw_taf:
+        # Show first part of raw TAF (base conditions)
+        lines = raw_taf.split(' FM')
+        if lines:
+            base = lines[0]
+            # Decode base conditions
+            output.append(f"📝 **Current Base Conditions:**")
+            
+            # Extract wind, visibility, ceiling from base
+            parts = base.split()
+            if len(parts) >= 2:
+                # Station and time
+                output.append(f"   *Issued: {parts[1][:2]}:{parts[1][2:4]}Z*")
+            
+            # Find wind
+            for part in parts:
+                if 'KT' in part:
+                    wind = decode_taf_wind(part)
+                    output.append(f"   💨 Wind: {wind}")
+                if part.endswith('SM'):
+                    vis = part.replace('SM', '')
+                    output.append(f"   👀 Visibility: {vis} statute miles")
+    
+    output.append("")
+    output.append("*Note: TAFs are designed for aviation use. Check with official sources for flight planning.*")
+    
+    return "\n".join(output)
+
+
+def get_fire_weather(gridpoint):
+    """Get fire weather information for the zone"""
+    try:
+        fire_zone_url = gridpoint.get('fireWeatherZone', '')
+        if not fire_zone_url:
+            return None
+        
+        zone_id = fire_zone_url.split('/')[-1]
+        
+        # Try to get fire weather forecast
+        url = f"https://api.weather.gov/zones/fire/{zone_id}/forecast"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            return data.get('properties', {})
+    except Exception as e:
+        print(f"Fire weather error: {e}", file=sys.stderr)
+    return None
+
+
+def check_fire_alerts(gridpoint):
+    """Check for fire-related alerts (Red Flag Warning, etc.)"""
+    try:
+        alerts = get_nws_alerts(gridpoint)
+        fire_alerts = []
+        
+        for alert in alerts:
+            event = alert.get('properties', {}).get('event', '').lower()
+            if any(term in event for term in ['red flag', 'fire weather', 'fire warning']):
+                fire_alerts.append(alert)
+        
+        return fire_alerts
+    except Exception:
+        return []
+
+
+def format_fire_weather_output(fire_data, fire_alerts, location_name):
+    """Format fire weather into readable output"""
+    output = []
+    output.append(f"🔥 **Fire Weather — {location_name}**")
+    output.append("")
+    
+    # Fire alerts first
+    if fire_alerts:
+        output.append("🚨 **Active Fire Alerts:**")
+        for alert in fire_alerts:
+            event = alert.get('properties', {}).get('event', 'Fire Alert')
+            severity = alert.get('properties', {}).get('severity', 'Unknown')
+            headline = alert.get('properties', {}).get('headline', '')
+            output.append(f"   {ALERT_SEVERITY_STYLES.get(severity, {}).get('emoji', '⚠️')} [{severity}] {event}")
+            if headline:
+                output.append(f"   {headline}")
+        output.append("")
+    
+    # Fire weather forecast
+    if fire_data:
+        forecast = fire_data.get('text', '')
+        if forecast:
+            # Extract key fire weather elements
+            dangerous_terms = ['critical', 'extreme', 'very high', 'high']
+            is_dangerous = any(term in forecast.lower() for term in dangerous_terms)
+            
+            if is_dangerous:
+                output.append("⚠️ **Fire Danger Level:** Elevated")
+            else:
+                output.append("✅ **Fire Danger Level:** Normal")
+            
+            # Show first sentence of forecast
+            sentences = forecast.split('. ')
+            if sentences:
+                summary = sentences[0] + '.' if not sentences[0].endswith('.') else sentences[0]
+                output.append(f"📝 **Forecast:** {summary}")
+    else:
+        output.append("ℹ️ Fire weather data not available for this location.")
+    
+    output.append("")
+    output.append("*Source: National Weather Service Fire Weather Zone*")
+    
+    return "\n".join(output)
+
+
+# ===== End Phase 3 =====
 
 
 def convert_c_to_f(celsius):
@@ -1060,13 +1422,19 @@ Options:
   --aqi                      Include AirNow AQI data
   --hourly                   Force hourly forecast (auto-detected for time queries)
   --current                  Show current station observation vs forecast
-  
+  --astro                    Show sunrise/sunset and astronomical data
+  --taf                       Show aviation forecast (TAF)
+  --fire                      Show fire weather information
+
 Examples:
   get_weather.py "Boston, MA"
   get_weather.py "Boston at 8 PM"       # Auto-detects hourly
   get_weather.py "Boston" --aqi         # Weather + AQI
   get_weather.py "Boston" --current     # Observed vs forecast
-  get_weather.py "Seattle" --aqi --current  # All features combined
+  get_weather.py "Boston" --astro       # Sunrise/sunset times
+  get_weather.py "SFO" --taf          # Aviation forecast
+  get_weather.py "California" --fire    # Fire weather
+  get_weather.py "Seattle" --aqi --current --astro  # All features combined
 """)
         sys.exit(1)
     
@@ -1075,6 +1443,9 @@ Examples:
     show_aqi = False
     force_hourly = False
     show_current = False
+    show_astro = False
+    show_taf = False
+    show_fire = False
     
     # Parse arguments
     if '--source' in sys.argv:
@@ -1090,6 +1461,15 @@ Examples:
     
     if '--current' in sys.argv:
         show_current = True
+    
+    if '--astro' in sys.argv:
+        show_astro = True
+    
+    if '--taf' in sys.argv:
+        show_taf = True
+    
+    if '--fire' in sys.argv:
+        show_fire = True
     
     # Detect temporal query
     temporal_detected = is_temporal_query(location) or force_hourly
@@ -1201,6 +1581,28 @@ Examples:
                 aqi_current = get_airnow_current(lat, lon)
                 aqi_forecast = get_airnow_forecast(lat, lon)
                 outputs.append(format_aqi_output(aqi_current, aqi_forecast, display_name))
+            
+            # Phase 3: Astronomical data
+            if show_astro:
+                astro_data = get_astronomical_data(gridpoint)
+                if astro_data:
+                    outputs.append(format_astronomical_output(astro_data, display_name))
+            
+            # Phase 3: Aviation TAF
+            if show_taf:
+                taf_data = get_aviation_taf(gridpoint)
+                if taf_data:
+                    outputs.append(format_taf_output(taf_data, display_name))
+                else:
+                    outputs.append(f"\n✈️ **Aviation Forecast — {display_name}**")
+                    outputs.append("")
+                    outputs.append("*No TAF available for nearest station.*")
+            
+            # Phase 3: Fire weather
+            if show_fire:
+                fire_data = get_fire_weather(gridpoint)
+                fire_alerts = check_fire_alerts(gridpoint)
+                outputs.append(format_fire_weather_output(fire_data, fire_alerts, display_name))
             
             if outputs:
                 print("\n\n".join(outputs))
