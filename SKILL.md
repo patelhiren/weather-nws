@@ -2,7 +2,7 @@
 name: weather-nws
 description: "US weather forecasts via National Weather Service (NWS) with automatic fallback to global weather for non-US locations. Provides detailed accumulation data, watches/warnings, and actionable timing. Use for: US-based weather queries, winter storm forecasts, precipitation accumulation estimates, severe weather alerts. Automatically falls back to global weather via wttr.in for international locations."
 homepage: https://api.weather.gov/
-metadata: {"clawdhub":{"emoji":"🌦️"}}
+metadata: {"clawdhub":{"emoji":"🌦️"},"clawdis":{"envVars":[{"name":"AIRNOW_API_KEY","required":false,"description":"AirNow API Key for AQI lookup"}]}}
 ---
 
 # Weather NWS Skill
