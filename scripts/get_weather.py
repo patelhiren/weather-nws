@@ -11,7 +11,6 @@ import sys
 import json
 import urllib.request
 import urllib.parse
-import subprocess
 import os
 import re
 from datetime import datetime, timedelta
@@ -23,8 +22,8 @@ except ImportError:
     DATEUTIL_AVAILABLE = False
     date_parser = None
 
-# Temporal query detection patterns
-TEMPORAL_PATTERNS = [
+# Temporal query detection patterns (pre-compiled for reuse)
+TEMPORAL_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r'tonight at\s+\d+',
     r'tonight',
     r'this afternoon',
@@ -42,7 +41,7 @@ TEMPORAL_PATTERNS = [
     r'start raining',
     r'start snowing',
     r'\d+:\d+',
-]
+]]
 
 # AQI category colors and health recommendations
 AQI_CATEGORIES = {
@@ -148,9 +147,8 @@ def strip_temporal_qualifiers(text):
 
 def is_temporal_query(location):
     """Check if location string contains temporal query patterns"""
-    location_lower = location.lower()
     for pattern in TEMPORAL_PATTERNS:
-        if re.search(pattern, location_lower):
+        if pattern.search(location):
             return True
     return False
 
@@ -199,9 +197,11 @@ def parse_target_time(location):
 
 
 def is_us_location(lat, lon):
-    """Check if coordinates are roughly within US bounds"""
-    # US approximate bounds: lat 24-49, lon -125 to -66
-    return 24 <= lat <= 49 and -125 <= lon <= -66
+    """Check if coordinates are roughly within US bounds (includes AK and HI)"""
+    conus = 24 <= lat <= 49 and -125 <= lon <= -66
+    alaska = 51 <= lat <= 72 and -180 <= lon <= -130
+    hawaii = 18 <= lat <= 23 and -161 <= lon <= -154
+    return conus or alaska or hawaii
 
 
 def get_nws_gridpoint(lat, lon):
@@ -339,7 +339,7 @@ def get_airnow_current(lat, lon):
     """Get current AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://www.airnowapi.org/aq/observation/latLong/current/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://api.airnowapi.org/aq/observation/latLong/current/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
@@ -357,7 +357,7 @@ def get_airnow_forecast(lat, lon):
     """Get forecast AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://www.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://api.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
@@ -401,13 +401,12 @@ def calculate_moon_phase(date):
     """Calculate approximate moon phase (0-7, where 0=new, 4=full)"""
     try:
         # Known new moon: January 6, 2000
-        import datetime
-        known_new_moon = datetime.datetime(2000, 1, 6, 18, 14, 0)
+        known_new_moon = datetime(2000, 1, 6, 18, 14, 0)
         
         if isinstance(date, str):
-            date = datetime.datetime.fromisoformat(date.replace('Z', '+00:00').replace('+00:00', ''))
-        elif isinstance(date, datetime.date) and not isinstance(date, datetime.datetime):
-            date = datetime.datetime.combine(date, datetime.time())
+            date = datetime.fromisoformat(date.replace('Z', '+00:00').replace('+00:00', ''))
+        elif hasattr(date, 'year') and not isinstance(date, datetime):
+            date = datetime.combine(date, datetime.min.time())
         
         # Lunar cycle is 29.53059 days
         lunar_cycle = 29.53059
@@ -431,10 +430,8 @@ def calculate_moon_phase(date):
             "🌘 Waning Crescent"
         ]
         
-        # Phase illumination percentage
+        # Phase illumination percentage (0=new=0%, 4=full=100%, symmetric)
         illumination = (1 - abs(phase - 4) / 4) * 100
-        if phase > 4:
-            illumination = (2 - abs(phase - 4) / 4) * 100
         
         return {
             'phase': phase,
@@ -548,7 +545,7 @@ def format_simple_time(iso_datetime):
     """Format ISO datetime to simple time string (e.g., '6:32 AM')"""
     try:
         dt = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
-        return dt.strftime('%-I:%M %p')
+        return dt.strftime('%I:%M %p').lstrip('0')
     except Exception:
         return iso_datetime
 
@@ -579,8 +576,6 @@ def get_aviation_taf(gridpoint):
 
 def decode_taf_wind(wind_str):
     """Decode TAF wind string (e.g., '27012KT' or 'VRB05KT')"""
-    import re
-    
     if not wind_str:
         return "Calm"
     
@@ -1346,19 +1341,11 @@ def parse_accumulations_from_text(periods):
 def get_wttr_forecast(location):
     """Get forecast from wttr.in as fallback"""
     try:
-        # Clean location for URL
-        clean_loc = location.replace(' ', '+')
-        
-        # Get 3-day forecast in text format
-        result = subprocess.run(
-            ['curl', '-s', f'wttr.in/{clean_loc}?format=v2'],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-        
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
+        encoded = urllib.parse.quote(location)
+        url = f"https://wttr.in/{encoded}?format=v2"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return response.read().decode()
     except Exception as e:
         print(f"wttr.in error: {e}", file=sys.stderr)
     return None
@@ -1367,17 +1354,11 @@ def get_wttr_forecast(location):
 def get_wttr_current(location):
     """Get current conditions from wttr.in"""
     try:
-        clean_loc = location.replace(' ', '+')
-        
-        result = subprocess.run(
-            ['curl', '-s', f'wttr.in/{clean_loc}?format=%C|%t|%w|%h|%p'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0 and result.stdout:
-            parts = result.stdout.strip().split('|')
+        encoded = urllib.parse.quote(location)
+        url = f"https://wttr.in/{encoded}?format=%C|%t|%w|%h|%p"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            parts = response.read().decode().strip().split('|')
             return {
                 'condition': parts[0] if len(parts) > 0 else 'Unknown',
                 'temp': parts[1] if len(parts) > 1 else '',
