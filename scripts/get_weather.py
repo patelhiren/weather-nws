@@ -113,6 +113,10 @@ def geocode_location(location):
     try:
         # Remove temporal qualifiers for geocoding
         clean_location = strip_temporal_qualifiers(location)
+        # 5-digit US zip codes match international postal codes (e.g. Korean 08831).
+        # Append ", USA" so Nominatim resolves them correctly.
+        if re.match(r'^\d{5}(-\d{4})?$', clean_location.strip()):
+            clean_location = clean_location.strip() + ', USA'
         encoded = urllib.parse.quote(clean_location)
         url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit=1"
         req = urllib.request.Request(url, headers={'User-Agent': 'ClawdWeather/1.0'})
