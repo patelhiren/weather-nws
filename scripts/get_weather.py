@@ -113,8 +113,8 @@ def geocode_location(location):
     try:
         # Remove temporal qualifiers for geocoding
         clean_location = strip_temporal_qualifiers(location)
-        # 5-digit US zip codes match international postal codes (e.g. Korean 08831).
-        # Append ", USA" so Nominatim resolves them correctly.
+        # 5-digit US zip codes are ambiguous — Nominatim may match international
+        # postal codes first. Append ", USA" to force US resolution.
         if re.match(r'^\d{5}(-\d{4})?$', clean_location.strip()):
             clean_location = clean_location.strip() + ', USA'
         encoded = urllib.parse.quote(clean_location)
@@ -343,7 +343,7 @@ def get_airnow_current(lat, lon):
     """Get current AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://api.airnowapi.org/aq/observation/latLong/current/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://www.airnowapi.org/aq/observation/latLong/current/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
@@ -361,7 +361,7 @@ def get_airnow_forecast(lat, lon):
     """Get forecast AQI from AirNow API"""
     try:
         api_key = os.environ.get('AIRNOW_API_KEY', '')
-        url = f"https://api.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
+        url = f"https://www.airnowapi.org/aq/forecast/latLong/?latitude={lat}&longitude={lon}&format=application/json"
         if api_key:
             url += f"&API_KEY={api_key}"
             
@@ -1132,19 +1132,24 @@ def format_aqi_output(current_data, forecast_data, location_name):
     
     # Forecast AQI
     if forecast_data and len(forecast_data) > 0:
-        output.append("**Forecast:**")
         seen_dates = set()
+        forecast_lines = []
         for forecast in forecast_data[:3]:  # Next 3 forecasts
             date = forecast.get('DateForecast', '')
             if date in seen_dates:
                 continue
             seen_dates.add(date)
-            
+
             aqi = forecast.get('AQI', 0)
+            if aqi < 0:
+                continue  # -1 means no forecast available for this pollutant/date
             category = forecast.get('Category', {}).get('Name', 'Unknown')
             cat_info = parse_aqi_category(aqi)
-            
-            output.append(f"{cat_info['emoji']} {date}: AQI {aqi} — {category}")
+            forecast_lines.append(f"{cat_info['emoji']} {date}: AQI {aqi} — {category}")
+
+        if forecast_lines:
+            output.append("**Forecast:**")
+            output.extend(forecast_lines)
     
     return "\n".join(output)
 

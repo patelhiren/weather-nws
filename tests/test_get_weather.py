@@ -463,6 +463,17 @@ class TestFormatAQIOutput(unittest.TestCase):
         self.assertIn("Ozone", output)
         self.assertIn("Denver", output)
 
+    def test_forecast_minus_one_filtered(self):
+        """AQI -1 sentinel values (no data) must not appear in output."""
+        current = [{"AQI": 20, "Category": {"Name": "Good"}, "ParameterName": "PM2.5"}]
+        forecast = [
+            {"AQI": -1, "Category": {"Name": "Good"}, "DateForecast": "2026-03-04"},
+            {"AQI": -1, "Category": {"Name": "Good"}, "DateForecast": "2026-03-05"},
+        ]
+        output = gw.format_aqi_output(current, forecast, "Seattle, WA")
+        self.assertNotIn("-1", output)
+        self.assertNotIn("Forecast:", output)
+
 
 # ---------------------------------------------------------------------------
 # 7. Alerts
